@@ -2,75 +2,82 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
+#include <assert.h>
 
-/* Internal generic data structures */
+#define HUFF_EOF 256
+#define HUFF_ENCODER_BUFFER_START 1024
+
+typedef int ctr;
+#define CTR_MAX INT_MAX
+
+/* Generic internal data structures */
 
 /* Linked list */
-struct node
+struct Node
 {
   void *data;
-  struct node *next;
-  struct node *prev;
+  struct Node *next;
+  struct Node *prev;
 };
-struct list_
+struct List_
 {
   /* Points to a dummy starting node */
-  struct node *first;
+  struct Node *first;
   /* Points to a dummy ending node */
-  struct node *last;
+  struct Node *last;
   int size;
 };
-typedef struct list_ *list;
+typedef struct List_ *List;
 
-static int list_init(list *l);
-static int list_destroy(list *l);
-static int list_size(list *l);
-static void *list_data(list *l, int index);
-static int list_ins(list *l, void *data, int index);
-static void *list_remove(list *l, int index);
+static List ListInit(void);
+static void ListDestroy(List l);
+static int ListSize(List l);
+static void *ListData(List l, int index);
+static int ListInsert(List l, void *data, int index);
+/* Returns the removed item */
+static void *ListRemove(List l, int index);
+/* Pass -1 as |index| to get the dummy first node
+   Pass size as |index| to get the dummy last node */
+static struct Node *ListNode_(List l, int index);
 
-static struct node *list_node_(list *l, int index);
-
-static int list_init(list *l)
+static List ListInit(void)
 {
-  list realL;
+  List l;
+
+  l = calloc(1, sizeof(*l));
   if (l == NULL)
     goto out;
 
-  realL = calloc(1, sizeof(*realL));
-  if (realL == NULL)
-    goto out;
-
-  realL->first = calloc(1, sizeof(*(realL->first)));
-  if (realL->first == NULL)
+  l->first = calloc(1, sizeof(*(l->first)));
+  if (l->first == NULL)
     goto out1;
 
-  realL->last = calloc(1, sizeof(*(realL->last)));
-  if (realL->last == NULL)
+  l->last = calloc(1, sizeof(*(l->last)));
+  if (l->last == NULL)
     goto out2;
   
-  realL->first->next = realL->last;
-  realL->last->prev = realL->first;
-  *l = realL;
-  return 0;
+  l->first->next = l->last;
+  l->last->prev = l->first;
+  return l;
 
 out2:
-  free(realL->first);
-  realL->first = NULL;
+  free(l->first);
+  l->first = NULL;
 out1:
-  free(realL);
-  realL = NULL;
+  free(l);
+  l = NULL;
 out:
-  return -1;
+  return NULL;
 }
-static int list_destroy(list *l)
+static void ListDestroy(List l)
 {
-  struct node *last;
-  struct node *cur;
-  if (l == NULL || *l == NULL)
-    return -1;
+  struct Node *last;
+  struct Node *cur;
+  assert(l != NULL);
+
   /* Walk the list, freeing the nodes */
-  cur = (*l)->first;
+  cur = l->first;
   
   while (cur != NULL) {
     last = cur;
@@ -79,45 +86,42 @@ static int list_destroy(list *l)
     last = NULL;
   }
 
-  free(*l);
-  *l = NULL;
-
-  return 0;
+  free(l);
+  l = NULL;
 }
-static int list_size(list *l)
+static int ListSize(List l)
 {
-  if (l == NULL || *l == NULL)
-    return -1;
+  assert(l != NULL);
 
-  return (*l)->size;
+  return l->size;
 }
-static void *list_data(list *l, int index)
+static void *ListData(List l, int index)
 {
-  struct node *n;
-  if (l == NULL || *l == NULL || index < 0 || index >= (*l)->size)
-    return NULL;
+  struct Node *n;
+  assert(l != NULL);
+  assert(index >= 0);
+  assert(index < l->size);
 
-  n = list_node_(l, index);
-  if (n == NULL)
-    return NULL;
+  n = ListNode_(l, index);
+  assert(n != NULL);
 
   return n->data;
 }
-static int list_ins(list *l, void *data, int index)
+static int ListInsert(List l, void *data, int index)
 {
-  struct node *before;
-  struct node *at;
-  struct node *after;
-  if (l == NULL || *l == NULL || index < 0 || index > (*l)->size)
-    return -1;
+  struct Node *before;
+  struct Node *at;
+  struct Node *after;
+  assert(l != NULL);
+  assert(index >= 0);
+  assert(index <= l->size);
+  assert(l->size != INT_MAX);
   
-  before = list_node_(l, index-1);
-  if (before == NULL)
-    return -1;
+  before = ListNode_(l, index-1);
+  assert(before != NULL);
 
   after = before->next;
-  if (after == NULL)
-    return -1;
+  assert(after != NULL);
 
   at = calloc(1, sizeof(*at));
   if (at == NULL)
@@ -130,26 +134,26 @@ static int list_ins(list *l, void *data, int index)
   before ->next = at;
   after->prev = at;
 
-  (*l)->size++;
+  l->size++;
   return 0;
 }
-static void *list_remove(list *l, int index)
+static void *ListRemove(List l, int index)
 {
-  struct node *before;
-  struct node *at;
-  struct node *after;
+  struct Node *before;
+  struct Node *at;
+  struct Node *after;
   void *ret;
-  if (l == NULL || *l == NULL || index < 0 || index >= (*l)->size)
-    return NULL;
+  assert(l != NULL);
+  assert(index >= 0);
+  assert(index < l->size);
 
-  at = list_node_(l, index);
-  if (at == NULL)
-    return NULL;
+  at = ListNode_(l, index);
+  assert(at != NULL);
 
   before = at->prev;
   after = at->next;
-  if (before == NULL || after == NULL)
-    return NULL;
+  assert(before != NULL);
+  assert(after != NULL);
 
   ret = at->data;
   free(at);
@@ -158,111 +162,94 @@ static void *list_remove(list *l, int index)
   before->next = after;
   after->prev = before;
 
-  (*l)->size--;
+  l->size--;
   return ret;
 }
-/* Pass -1 to get the dummy first node
-   Pass size to get the dummy last node */
-static struct node *list_node_(list *l, int index)
+static struct Node *ListNode_(List l, int index)
 {
   int useFirst;
-  list realL;
-  if (l == NULL || *l == NULL || index < -1 || index > (*l)->size)
-    return NULL;
+  struct Node *cur;
+  assert(l != NULL);
+  assert(index >= -1);
+  assert(index <= l->size);
 
-  realL = *l;
-  useFirst = (index < realL->size/2);
+  useFirst = (index < l->size/2);
   if (useFirst) {
     int thisIdx = -1;
-    struct node *cur = realL->first;
-    while (thisIdx < index && cur != NULL) {
+    cur = l->first;
+    while (thisIdx < index) {
       cur = cur->next;
       thisIdx++;
+      assert(cur != NULL);
     }
-
-    return cur;
   } else {
-    int thisIdx = realL->size;
-    struct node *cur = realL->last;
-    while (thisIdx > index && cur != NULL) {
+    int thisIdx = l->size;
+    cur = l->last;
+    while (thisIdx > index) {
       cur = cur->prev;
       thisIdx--;
+      assert(cur != NULL);
     }
-
-    return cur;
   }
+
+  return cur;
 }
 
 /* Priority queue wrapper interface for above list */
-
-struct priorityitem
+struct PriorityQueueItem
 {
   void *data;
-  int priority;
+  ctr priority;
 };
-struct priority_
+struct PriorityQueue_
 {
-  list l;
+  List l;
 };
-typedef struct priority_ *priority;
+typedef struct PriorityQueue_ *PriorityQueue;
 
-static int priority_init(priority *pq);
-static int priority_destroy(priority *pq);
-static int priority_add(priority *pq, void *data, int priority);
-static void *priority_peek(priority *pq);
-static void *priority_dequeue(priority *pq);
-static int priority_size(priority *pq);
+static PriorityQueue PriorityQueueInit(void);
+static void PriorityQueueDestroy(PriorityQueue pq);
+/* Returns -1 if there isn't enough memory
+   0 otherwise */
+static int PriorityQueueInsert(PriorityQueue pq, void *data, ctr priority);
+static void *PriorityQueueRemoveMin(PriorityQueue pq);
+static int PriorityQueueSize(PriorityQueue pq);
 
-static int priority_init(priority *pq)
+static PriorityQueue PriorityQueueInit(void)
 {
-  priority realPq;
-  int res;
+  PriorityQueue pq;
+
+  pq = calloc(1, sizeof(*pq));
   if (pq == NULL)
-    return -1;
+    return NULL;
 
-  realPq = calloc(1, sizeof(*realPq));
-  if (realPq == NULL)
-    return -1;
-
-  res = list_init(&realPq->l);
-  if (res) {
-    free(realPq);
-    realPq = NULL;
-    return -1;
+  pq->l = ListInit();
+  if (pq->l == NULL) {
+    free(pq);
+    pq = NULL;
   }
-
-  *pq = realPq;
-  return 0;
+  return pq;
 }
-static int priority_destroy(priority *pq)
+static void PriorityQueueDestroy(PriorityQueue pq)
 {
-  priority realPq;
-  int res;
-  if (pq == NULL || *pq == NULL)
-    return -1;
+  assert(pq != NULL);
 
-  realPq = *pq;
+  /* This frees all the PriorityQueueItem structs we calloc'd */
+  while (PriorityQueueSize(pq) > 0)
+    PriorityQueueRemoveMin(pq);
 
-  /* This frees all the priorityitem structs we calloc'd */
-  while (priority_size(pq) > 0)
-    priority_dequeue(pq);
+  ListDestroy(pq->l);
 
-  res = list_destroy(&realPq->l);
-
-  free(*pq);
-  *pq = NULL;
-
-  return res;
+  free(pq);
 }
-static int priority_add(priority *pq, void *data, int priority)
+static int PriorityQueueInsert(PriorityQueue pq, void *data, ctr priority)
 {
-  struct priorityitem *thisItem;
+  struct PriorityQueueItem *thisItem;
   int size;
   int insertIdx;
-  list l;
+  List l;
   int res;
-  if (pq == NULL || *pq == NULL)
-    goto out;
+  assert(pq != NULL);
 
   thisItem = calloc(1, sizeof(*thisItem));
   if (thisItem == NULL)
@@ -271,25 +258,21 @@ static int priority_add(priority *pq, void *data, int priority)
   thisItem->data = data;
   thisItem->priority = priority;
 
-  l = (*pq)->l;
+  l = pq->l;
 
-  size = list_size(&l);
+  size = ListSize(l);
 
-  if (size == -1) {
-    goto out1;
-  }
-  else if (size == 0) {
+  if (size == 0) {
     insertIdx = 0;
   } else {
-    int lastPri;
+    ctr lastPri;
     int i = 0;
 
     /* This may be unreasonably slow because of the repeated linked list random access
-       Who knows though, haven't profiled */
+       who knows though, haven't profiled */
     do {
-      struct priorityitem *item = list_data(&l, i);
-      if (item == NULL)
-        goto out1;
+      struct PriorityQueueItem *item = ListData(l, i);
+      assert(item != NULL);
 
       lastPri = item->priority;
       i++;
@@ -298,7 +281,7 @@ static int priority_add(priority *pq, void *data, int priority)
     insertIdx = i-1;
   }
 
-  res = list_ins(&l, thisItem, insertIdx);
+  res = ListInsert(l, thisItem, insertIdx);
   if (res == -1)
     goto out1;
 
@@ -309,171 +292,173 @@ out1:
 out:
   return -1;
 }
-static void *priority_peek(priority *pq)
+static void *PriorityQueueRemoveMin(PriorityQueue pq)
 {
-  struct priorityitem *item;
-  if (pq == NULL || *pq == NULL)
-    return NULL;
+  struct PriorityQueueItem *item;
+  assert(pq != NULL);
 
-  item = list_data(&(*pq)->l, 0);
-  if (item == NULL)
-    return NULL;
+  item = ListRemove(pq->l, 0);
+  assert(item != NULL);
 
   return item->data;
 }
-static void *priority_dequeue(priority *pq)
+static int PriorityQueueSize(PriorityQueue pq)
 {
-  struct priorityitem *item;
-  if (pq == NULL || *pq == NULL)
-    return NULL;
+  assert(pq != NULL);
 
-  item = list_remove(&(*pq)->l, 0);
-  if (item == NULL)
-    return NULL;
-
-  return item->data;
-}
-static int priority_size(priority *pq)
-{
-  if (pq == NULL || *pq == NULL)
-    return -1;
-
-  return list_size(&(*pq)->l);
+  return ListSize(pq->l);
 }
 
 /* Main huff code */
 
-/* freqdic */
-typedef int ctr;
+/* HuffCounter */
 
-struct huff_freqdic_
+struct HuffCounter_
 {
   ctr counts[256];
   ctr totalCount;
 };
 
-int huff_freqdic_init(huff_freqdic *dic)
+static ctr HuffCounterCount(HuffCounter counter, int c);
+
+HuffCounter HuffCounterInit(void)
 {
-  huff_freqdic realDic;
-  if (dic == NULL)
-    return HUFF_BADOBJ;
+  HuffCounter counter;
 
-  realDic = calloc(1, sizeof(*realDic));
-  if (realDic == NULL)
-    return HUFF_NOMEM;
+  counter = calloc(1, sizeof(*counter));
+  if (counter == NULL)
+    return NULL;
 
-  /* One EOF will never be accounted for in the other counts */
-  realDic->totalCount = 1;
+  /* One EOF will never be accounted for otherwise, so we put it here */
+  counter->totalCount = 1;
 
-  *dic = realDic;
-  return HUFF_SUCCESS;
+  return counter;
 }
-
-int huff_freqdic_destroy(huff_freqdic *dic)
+HuffCounter HuffCounterCopy(HuffCounter from)
 {
-  if (dic == NULL || *dic == NULL)
-    return HUFF_BADOBJ;
+  HuffCounter into;
+  assert(from != NULL);
 
-  free(*dic);
-  *dic = NULL;
+  into = calloc(1, sizeof(*into));
+  if (into == NULL)
+    return NULL;
 
-  return HUFF_SUCCESS;
+
+  memcpy(into, from, sizeof(*into));
+
+  return into;
 }
-
-int huff_freqdic_feeddata(huff_freqdic *dic, const uint8_t* data, int length)
+void HuffCounterDestroy(HuffCounter counter)
 {
-  huff_freqdic realDic;
-  struct huff_freqdic_ workingDic;
+  assert(counter != NULL);
+
+  free(counter);
+}
+int HuffCounterFeedData(HuffCounter counter, const uint8_t* data, int length)
+{
+  struct HuffCounter_ workingCounter;
   int i;
+  assert(counter != NULL);
+  assert(length >= 0);
 
-  if (dic == NULL || *dic == NULL)
-    return HUFF_BADOBJ;
-
-  if (length < 0)
-    return HUFF_BADLENGTH;
-
-  realDic = *dic;
 
   /* Copy the freq counts so we can return the originals if they overflow */
-  memcpy(&workingDic, realDic, sizeof(workingDic));
+  memcpy(&workingCounter, counter, sizeof(workingCounter));
 
   for (i = 0; i < length; i++) {
-    ctr before = workingDic.totalCount;
-    if (before+1 < before) {
-      /* We overflowed */
+    ctr before = workingCounter.totalCount;
+    if (before == CTR_MAX) {
+      /* We would overflow */
       return HUFF_TOOMUCHDATA;
     } else {
-      workingDic.counts[data[i]]++;
-      workingDic.totalCount++;
+      workingCounter.counts[data[i]]++;
+      workingCounter.totalCount++;
     }
   }
 
-  memcpy(realDic, &workingDic, sizeof(workingDic));
+  memcpy(counter, &workingCounter, sizeof(workingCounter));
   return HUFF_SUCCESS;
+}
+static ctr HuffCounterCount(HuffCounter counter, int c)
+{
+  assert(counter != NULL);
+  assert(c >= 0);
+  assert(c <= 256);
+
+  return counter->counts[c];
 }
 
 /* Huffman tree */
-#define HUFF_EOF 256
-
-struct huff_node
+struct HuffTreeNode
 {
   ctr weight;
   int isLeaf;
+  struct HuffTreeNode *parent;
   union {
     struct {
-      struct huff_node *left;
-      struct huff_node *right;
+      struct HuffTreeNode *left;
+      struct HuffTreeNode *right;
     };
     int c;
   };
 };
-struct huff_tree_
+struct HuffTree_
 {
-  struct huff_node *root;
+  struct HuffTreeNode *root;
+  struct HuffTreeNode *leafs[257];
+
+  /* Used for storing encoding information */
+  /* Initially all NULL */
+  uint8_t *leafBits[257];
+  /* Initially all 0 */
+  int leafBitLengths[257];
+
+  /* Used for storing decoding information */
+  /* Current decode position */
+  struct HuffTreeNode *decodeNode;
 };
-typedef struct huff_tree_ *huff_tree;
+typedef struct HuffTree_ *HuffTree;
 
-static int huff_tree_init(huff_tree *tree, huff_freqdic *dic);
-static int huff_tree_destroy(huff_tree* tree);
-static int huff_tree_encode(huff_tree *tree, uint8_t in, const uint8_t **outBits, int nBits);
-/* Returns -1 if an error occurs,
-   0 if no error occurred but no output chars are finished yet,
-   1 if no error occurred and an output char was finished - the output char is written to the |out| argument */
-static int huff_tree_decode(huff_tree *tree, int bit, uint8_t *out);
+static HuffTree HuffTreeInit(HuffCounter counter);
+static void HuffTreeDestroy(HuffTree tree);
+/* Returns -1 if there isn't enough memory
+   0 otherwise */
+static int HuffTreeEncode(HuffTree tree, int in, const uint8_t **outBits, int *outBitCount);
+/* Returns 0 if no output chars are finished yet,
+   1 if an output char was finished - the output char is written to the |out| argument
+   |out| is an int so that it can hold HUFFMAN_EOF, in addition to uint8_t values */
+static int HuffTreeDecode(HuffTree tree, int bit, int *out);
+static void HuffTreeNodeFree_(struct HuffTreeNode *node);
 
-static void huff_node_free_(struct huff_node *node);
-
-static int huff_tree_init(huff_tree *tree, huff_freqdic *dic)
+static HuffTree HuffTreeInit(HuffCounter counter)
 {
-  huff_freqdic realDic;
-  huff_tree realTree;
-  priority pq;
+  HuffTree tree;
+  PriorityQueue pq;
   int res;
   int i;
+  struct HuffTreeNode *lastNode;
 
-  if (tree == NULL || dic == NULL || *dic == NULL)
+  tree = calloc(1, sizeof(*tree));
+  if (tree == NULL)
     goto out;
 
-  realDic = *dic;
-  realTree = calloc(1, sizeof(*realTree));
-  if (realTree == NULL)
-    goto out;
-
-  res = priority_init(&pq);
-  if (res)
+  pq = PriorityQueueInit();
+  if (pq == NULL)
     goto out1;
 
   /* Add all the characters (plus EOF) to the priority queue with their counts as priorities */
   for (i = 0; i < 257; i++) {
-    struct huff_node *node = malloc(sizeof(*node));
+    struct HuffTreeNode *node = malloc(sizeof(*node));
     if (node == NULL)
       goto out2;
 
+    tree->leafs[i] = node;
     node->isLeaf = 1;
     node->c = i;
-    node->weight = realDic->counts[i];
+    node->weight = HuffCounterCount(counter, i);
+    node->parent = NULL;
 
-    res = priority_add(&pq, (void *)(char)i, realDic->counts[i]);
+    res = PriorityQueueInsert(pq, (void *)(char)i, HuffCounterCount(counter, i));
     if (res) {
       free(node);
       node = NULL;
@@ -482,38 +467,37 @@ static int huff_tree_init(huff_tree *tree, huff_freqdic *dic)
   }
 
   /* Build the tree by repeatedly pairing the lowest-weight nodes */
-  while (priority_size(&pq) > 1) {
+  while (PriorityQueueSize(pq) > 1) {
     int res;
-    struct huff_node *left;
-    struct huff_node *right;
-    struct huff_node *joiner = malloc(sizeof(*joiner));
+    struct HuffTreeNode *left;
+    struct HuffTreeNode *right;
+    struct HuffTreeNode *joiner = malloc(sizeof(*joiner));
     if (joiner == NULL)
       goto out2;
 
     joiner->isLeaf = 0;
     
     /* Get the lowest-weight nodes */
-    left = priority_dequeue(&pq);
-    right = priority_dequeue(&pq);
-
-    if (left == NULL || right == NULL) {
-      free(joiner);
-      joiner = NULL;
-      goto out2;
-    }
+    left = PriorityQueueRemoveMin(pq);
+    right = PriorityQueueRemoveMin(pq);
+    assert(left != NULL);
+    assert(right != NULL);
 
     joiner->left = left;
     joiner->right = right;
+    joiner->parent = NULL;
+    left->parent = joiner;
+    right->parent = joiner;
+
+    /* Weights should always be non-negative */
+    assert(left->weight >= 0);
+    assert(right->weight >= 0);
+    /* We should never overflow, because we keep track of counts in the counter and limit the number of total counts to be <= CTR_MAX */
+    assert(left->weight <= CTR_MAX - right->weight);
+
     joiner->weight = left->weight + right->weight;
 
-    if (joiner->weight < left->weight || joiner->weight < right->weight) {
-      /* We overflowed */
-      free(joiner);
-      joiner = NULL;
-      goto out2;
-    }
-
-    res = priority_add(&pq, joiner, joiner->weight);
+    res = PriorityQueueInsert(pq, joiner, joiner->weight);
     if (res) {
       free(joiner);
       joiner = NULL;
@@ -522,103 +506,273 @@ static int huff_tree_init(huff_tree *tree, huff_freqdic *dic)
   }
 
   /* The last node will be the root of the tree */
-  struct huff_node *lastNode = priority_dequeue(&pq);
-  if (huff_node == NULL)
-    goto out2;
+  lastNode = PriorityQueueRemoveMin(pq);
+  assert(lastNode != NULL);
 
-  realTree->root = lastNode;
+  tree->root = lastNode;
+  tree->decodeNode = tree->root;
 
-  priority_destroy(&pq);
-  *tree = realTree;
-  return 0;
+  PriorityQueueDestroy(pq);
+
+  return tree;
 out2:
   /* Dequeue and free all nodes */
-  while (priority_size(&pq) > 0) {
-    struct huff_node *node = priority_dequeue(&pq);
-    huff_node_free_(node);
+  while (PriorityQueueSize(pq) > 0) {
+    struct HuffTreeNode *node = PriorityQueueRemoveMin(pq);
+    assert(node != NULL);
+    HuffTreeNodeFree_(node);
   }
-  priority_destroy(&pq);
+  PriorityQueueDestroy(pq);
 out1:
-  free(realTree);
-  realTree = NULL;
+  free(tree);
+  tree = NULL;
 out:
-  return -1;
+  return NULL;
 }
-static int huff_tree_destroy(huff_tree* tree)
+static void HuffTreeDestroy(HuffTree tree)
 {
-}
-static int huff_tree_encode(huff_tree *tree, uint8_t in, const uint8_t **outBits, int nBits)
-{
-}
-static int huff_tree_decode(huff_tree *tree, int bit, uint8_t *out)
-{
-}
+  int i;
+  assert(tree != NULL);
 
-static void huff_node_free_(struct huff_node *node)
+  for (i = 0; i < 257; i++) {
+    /* Not used ones are left as NULL, so it's okay to free all of them */
+    free(tree->leafBits[i]);
+  }
+
+  /* We must free the nodes this way and not through tree->leafs */
+  HuffTreeNodeFree_(tree->root);
+
+  free(tree);
+}
+static int HuffTreeEncode(HuffTree tree, int in, const uint8_t **outBits, int *outBitCount)
 {
-  if (node == NULL)
-    return;
+  uint8_t *bits;
+  assert(tree != NULL);
+  assert(in >= 0);
+  assert(in <= 256);
+  assert(outBits != NULL);
+  assert(outBitCount != NULL);
+
+  bits = tree->leafBits[in];
+  if (bits == NULL) {
+    int length = 0;
+    struct HuffTreeNode *curNode = tree->leafs[in];
+    int byteIdx;
+    int bitIdx;
+    uint8_t *bitBase;
+    assert(tree->leafBitLengths[in] == 0);
+
+    /* Calculate length of bit pattern */
+    while (curNode->parent != NULL) {
+      /* The maximum depth is certainly less than 260 < INT_MAX, so the condition should always hold
+         Don't do undefined behavior, kids */
+      assert(length != INT_MAX);
+      length++;
+      curNode = curNode->parent;
+    }
+    assert(length > 0);
+    assert(length <= INT_MAX - 7);
+
+    tree->leafBits[in] = calloc(1, (length + 7)/8);
+    if (tree->leafBits[in] != NULL)
+      return -1;
+
+    bitBase = tree->leafBits[in];
+    bitIdx = (length-1) % 8;
+    byteIdx = (length-1) / 8;
+
+    curNode = tree->leafs[in];
+    while (curNode->parent != NULL) {
+      int bit;
+      int isLeft = curNode->parent->left == curNode;
+      int isRight = curNode->parent->right == curNode;
+      assert(isLeft || isRight);
+
+      if (isLeft)
+        bit = 0;
+      else /* if (isRight) */
+        bit = 1;
+
+      assert(byteIdx >= 0);
+      assert(bitIdx >= 0);
+
+      /* Where we're going, we don't need temporaries */
+      *(bitBase+byteIdx) = (uint8_t)(((*(bitBase+byteIdx)) & (~(1<<bitIdx))) | (bit<<bitIdx));
+
+      bitIdx--;
+      if (bitIdx < 0) {
+        bitIdx = 7;
+        byteIdx--;
+      }
+
+      curNode = curNode->parent;
+    }
+
+    /* Make sure that the length matched up exactly with the number of expected bits */
+    assert(bitIdx == 7);
+    assert(byteIdx == -1);
+
+    /* The bits have been written, now we just need to update the length */
+    tree->leafBitLengths[in] = length;
+  }
+
+  *outBits = tree->leafBits[in];
+  *outBitCount = tree->leafBitLengths[in];
+}
+static int HuffTreeDecode(HuffTree tree, int bit, int *out)
+{
+  assert(tree != NULL);
+  assert(bit == 0 || bit == 1);
+  assert(out != NULL);
+  assert(tree->decodeNode != NULL);
+  assert(!(tree->decodeNode->isLeaf));
+
+  if (bit == 0)
+    tree->decodeNode = tree->decodeNode->left;
+  else /* if (bit == 1) */
+    tree->decodeNode = tree->decodeNode->right;
+
+  assert(tree->decodeNode != NULL);
+
+  if (tree->decodeNode->isLeaf) {
+    *out = tree->decodeNode->c;
+    tree->decodeNode = tree->root;
+    return 1;
+  }
+  else {
+    return 0;
+  }
+}
+static void HuffTreeNodeFree_(struct HuffTreeNode *node)
+{
+  assert(node != NULL);
 
   if (!node->isLeaf) {
-    huff_node_free_(node->left);
-    huff_node_free_(node->right);
+    assert(node->left != NULL);
+    assert(node->right != NULL);
+
+    HuffTreeNodeFree_(node->left);
+    HuffTreeNodeFree_(node->right);
   }
   free(node);
 }
 
 /* encoder */
-int huff_encoder_init(huff_encoder *encoder, huff_freqdic *dic)
+struct HuffEncoder_
 {
+  HuffCounter counter;
+  int counterBytesWritten;
+
+  HuffTree tree;
+
+  uint8_t* buffer;
+  int bufferSize;
+  int byteIdx;
+  int bitIdx;
+};
+
+HuffEncoder HuffEncoderInit(HuffCounter counter, int initialBufferSize)
+{
+  HuffEncoder enc;
+  assert(initialBufferSize >= 0);
+
+  enc = calloc(1, sizeof(*enc));
+  if (enc == NULL)
+    goto out;
+
+  enc->counter = HuffCounterCopy(counter);
+  if (enc->counter == NULL)
+    goto out1;
+
+  enc->counterBytesWritten = 0;
+
+  enc->tree = HuffTreeInit(enc->counter);
+  if (enc->tree == NULL)
+    goto out2;
+
+  if (initialBufferSize == 0)
+    initialBufferSize = HUFF_ENCODER_BUFFER_START;
+
+  enc->buffer = malloc(initialBufferSize);
+  if (enc->buffer == NULL)
+    goto out3;
+
+  enc->bufferSize = initialBufferSize;
+  enc->byteIdx = 0;
+  enc->bitIdx = 0;
+
+  return enc;
+out3:
+  HuffTreeDestroy(enc->tree);
+out2:
+  HuffCounterDestroy(enc->counter);
+out1:
+  free(enc);
+  enc = NULL;
+out:
+  return NULL;
+}
+
+void HuffEncoderDestroy(HuffEncoder encoder)
+{
+  assert(encoder != NULL);
+
+  HuffCounterDestroy(encoder->counter);
+  HuffTreeDestroy(encoder->tree);
+  free(encoder->buffer);
+  free(encoder);
+}
+
+int HuffEncoderFeedData(HuffEncoder encoder, const uint8_t *data, int length)
+{
+  /* TODO - implement */
   return 0;
 }
 
-int huff_encoder_destroy(huff_encoder *encoder)
+int HuffEncoderEndData(HuffEncoder encoder)
 {
+  /* TODO - implement */
   return 0;
 }
 
-int huff_encoder_feeddata(huff_encoder *encoder, const uint8_t* data, int length)
+int HuffEncoderByteCount(HuffEncoder encoder)
 {
-    return 0;
-}
-
-int huff_encoder_enddata(huff_encoder* encoder)
-{
+  /* TODO - implement */
   return 0;
 }
 
-int huff_encoder_bytestowrite(huff_encoder *encoder)
+int HuffEncoderWriteBytes(HuffEncoder encoder, uint8_t *buf, int length)
 {
-  return 0;
-}
-
-int huff_encoder_writebytes(huff_encoder *encoder, uint8_t* buf, int length)
-{
+  /* TODO - implement */
   return 0;
 }
 
 /* decoder */
-int huff_decoder_init(huff_decoder *decoder)
+HuffDecoder HuffDecoderInit(void)
 {
+  /* TODO - implement */
+  return NULL;
+}
+
+void HuffDecoderDestroy(HuffDecoder decoder)
+{
+  /* TODO - implement */
+}
+
+int HuffDecoderFeedData(HuffDecoder decoder, const uint8_t *data, int length)
+{
+  /* TODO - implement */
   return 0;
 }
 
-int huff_decoder_destroy(huff_decoder *decoder)
+int HuffDecoderByteCount(HuffDecoder decoder)
 {
+  /* TODO - implement */
   return 0;
 }
 
-int huff_decoder_feeddata(huff_decoder *decoder, const uint8_t* data, int length)
+int HuffDecoderWriteBytes(HuffDecoder decoder, uint8_t *buf, int length)
 {
-  return 0;
-}
-
-int huff_decoder_bytestowrite(huff_decoder *decoder)
-{
-  return 0;
-}
-
-int huff_decoder_writebytes(huff_decoder *decoder, uint8_t* buf, int length)
-{
+  /* TODO - implement */
   return 0;
 }
