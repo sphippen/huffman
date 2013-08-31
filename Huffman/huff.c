@@ -8,8 +8,8 @@
 #define HUFF_EOF 256
 #define HUFF_ENCODER_BUFFER_START 1024
 
-typedef int ctr;
-#define CTR_MAX INT_MAX
+typedef int32_t ctr;
+#define CTR_MAX INT32_MAX
 
 /* Generic internal data structures */
 
@@ -115,6 +115,7 @@ static int ListInsert(List l, void *data, int index)
   assert(l != NULL);
   assert(index >= 0);
   assert(index <= l->size);
+  /* Shouldn't ever happen for this project, but still... undefined behavior */
   assert(l->size != INT_MAX);
   
   before = ListNode_(l, index-1);
@@ -360,7 +361,6 @@ int HuffCounterFeedData(HuffCounter counter, const uint8_t* data, int length)
   int i;
   assert(counter != NULL);
   assert(length >= 0);
-
 
   /* Copy the freq counts so we can return the originals if they overflow */
   memcpy(&workingCounter, counter, sizeof(workingCounter));
@@ -618,6 +618,7 @@ static int HuffTreeEncode(HuffTree tree, int in, const uint8_t **outBits, int *o
 
   *outBits = tree->leafBits[in];
   *outBitCount = tree->leafBitLengths[in];
+  return 0;
 }
 static int HuffTreeDecode(HuffTree tree, int bit, int *out)
 {
@@ -661,7 +662,7 @@ static void HuffTreeNodeFree_(struct HuffTreeNode *node)
 struct HuffEncoder_
 {
   HuffCounter counter;
-  int counterBytesWritten;
+  int counterBytesToWrite;
 
   HuffTree tree;
 
@@ -670,6 +671,10 @@ struct HuffEncoder_
   int byteIdx;
   int bitIdx;
 };
+
+int HuffEncoderExpandBufferToFit_(HuffEncoder encoder, int byteCount, int bitCount);
+int HuffEncoderFeedSingle_(HuffEncoder encoder, int data);
+int HuffEncoderWriteHeaderBytes_(HuffEncoder encoder, uint8_t *buf, int length);
 
 HuffEncoder HuffEncoderInit(HuffCounter counter, int initialBufferSize)
 {
@@ -684,7 +689,10 @@ HuffEncoder HuffEncoderInit(HuffCounter counter, int initialBufferSize)
   if (enc->counter == NULL)
     goto out1;
 
-  enc->counterBytesWritten = 0;
+  /* I know you might want a big data type, but... really? You don't need INT_MAX / 256 bytes */
+  assert(sizeof(ctr) <= INT_MAX / 256);
+
+  enc->counterBytesToWrite = 256*sizeof(ctr);
 
   enc->tree = HuffTreeInit(enc->counter);
   if (enc->tree == NULL)
@@ -712,7 +720,6 @@ out1:
 out:
   return NULL;
 }
-
 void HuffEncoderDestroy(HuffEncoder encoder)
 {
   assert(encoder != NULL);
@@ -722,29 +729,186 @@ void HuffEncoderDestroy(HuffEncoder encoder)
   free(encoder->buffer);
   free(encoder);
 }
-
-int HuffEncoderFeedData(HuffEncoder encoder, const uint8_t *data, int length)
+int HuffEncoderFeedData(HuffEncoder encoder, const uint8_t *data, int length, int *processed)
 {
-  /* TODO - implement */
-  return 0;
-}
+  int i;
+  int ret = HUFF_NOMEM;
+  assert(encoder != NULL);
+  assert(length >= 0);
+  assert(length == 0 || data != NULL);
+  assert(length == 0 || processed != NULL);
 
+  for (i = 0; i < length; i++) {
+    ret = HuffEncoderFeedSingle_(encoder, data[i]);
+    if (ret != HUFF_SUCCESS)
+      break;
+  }
+
+  *processed = i;
+  return ret;
+}
 int HuffEncoderEndData(HuffEncoder encoder)
 {
-  /* TODO - implement */
-  return 0;
+  assert(encoder != NULL);
+  return HuffEncoderFeedSingle_(encoder, HUFF_EOF);
 }
-
 int HuffEncoderByteCount(HuffEncoder encoder)
 {
-  /* TODO - implement */
-  return 0;
+  assert(encoder != NULL);
+  return encoder->byteIdx + encoder->counterBytesToWrite;
 }
-
 int HuffEncoderWriteBytes(HuffEncoder encoder, uint8_t *buf, int length)
 {
-  /* TODO - implement */
-  return 0;
+  int headerWriteCount;
+  int toWrite;
+  int byteCount;
+  int toShift;
+  int i;
+  assert(encoder != NULL);
+  assert(length >= 0);
+  assert(length == 0 || buf != NULL);
+
+  headerWriteCount = HuffEncoderWriteHeaderBytes_(encoder, buf, length);
+
+  length -= headerWriteCount;
+
+  byteCount = HuffEncoderByteCount(encoder);
+  toWrite = (length < byteCount) ? length : byteCount;
+
+  if (toWrite > 0) {
+    memcpy(buf+headerWriteCount, encoder->buffer, toWrite);
+    
+    /* Shift data down in the internal buffer */
+    toShift = encoder->bufferSize - toWrite;
+    for (i = 0; i < toShift; i++)
+      encoder->buffer[i] = encoder->buffer[i+toWrite];
+
+    encoder->byteIdx -= toWrite;
+  }
+
+  return headerWriteCount + toWrite;
+}
+int HuffEncoderFeedSingle_(HuffEncoder encoder, int data)
+{
+  const uint8_t *bits;
+  int totalBitCount;
+  int bitCount;
+  int byteCount;
+  int byteLookup;
+  int bitLookup;
+  int j;
+  int res;
+ 
+  assert(data >= 0);
+  assert(data <= 256);
+  res = HuffTreeEncode(encoder->tree, data, &bits, &totalBitCount);
+  if (res)
+    return HUFF_NOMEM;
+  
+  byteCount = totalBitCount / 8;
+  bitCount = totalBitCount %  8;
+  res = HuffEncoderExpandBufferToFit_(encoder, byteCount, bitCount);
+  if (res)
+    return HUFF_TOOMUCHDATA;
+
+  /* Actually add the encoded bits to the buffer */
+  byteLookup = 0;
+  bitLookup = 0;
+  for (j = 0; j < totalBitCount; j++) {
+    int bit;
+    assert(bitLookup >= 0);
+    assert(bitLookup < 8);
+    assert(byteLookup >= 0);
+    bit = (bits[byteLookup] & (1<<bitLookup)) >> bitLookup;
+    
+    assert(encoder->bitIdx >= 0);
+    assert(encoder->bitIdx < 8);
+    assert(encoder->byteIdx >= 0);
+    assert(encoder->byteIdx < encoder->bufferSize);
+    /* If you can't tell what this does at a glance, you're not a real a C programmer */
+    *(encoder->buffer+encoder->byteIdx) = (uint8_t)(((*(encoder->buffer+encoder->byteIdx)) & (~(1<<encoder->bitIdx))) | (bit<<encoder->bitIdx));
+
+    bitLookup++;
+    if (bitLookup == 8) {
+      bitLookup = 0;
+      byteLookup++;
+    }
+
+    encoder->bitIdx++;
+    if (encoder->bitIdx == 8) {
+      encoder->bitIdx = 0;
+      encoder->byteIdx++;
+    }
+  }
+
+  return HUFF_SUCCESS;
+}
+int HuffEncoderExpandBufferToFit_(HuffEncoder encoder, int byteCount, int bitCount)
+{
+  int freeBytes;
+  int freeBits;
+  int notEnoughSpace;
+  assert(encoder != NULL);
+  assert(encoder->byteIdx >= 0);
+  assert(encoder->bitIdx >= 0);
+  /* Check if we already have enough space in the buffer */
+  freeBytes = encoder->bufferSize - encoder->byteIdx + (encoder->bitIdx + 7)/8;
+  freeBits = (8 - encoder->bitIdx) % 8;
+  notEnoughSpace = freeBytes < byteCount || (freeBytes == byteCount && freeBits < bitCount);
+  while (notEnoughSpace) {
+    uint8_t *newBuffer;
+    /* There isn't enough space - attempt to get bigger */
+    if (encoder->bufferSize > INT_MAX / 2)
+      /* Can't get bigger due to overflow */
+      break;
+
+    newBuffer = realloc(encoder->buffer, encoder->bufferSize*2);
+    if (newBuffer == NULL)
+      /* Couldn't get bigger due to lack of memory */
+      break;
+    
+    freeBytes += encoder->bufferSize;
+    encoder->buffer = newBuffer;
+    encoder->bufferSize *= 2;
+  }
+
+  notEnoughSpace = freeBytes < byteCount || (freeBytes == byteCount && freeBits < bitCount);
+  if (notEnoughSpace)
+    return -1;
+  else
+    return 0;
+}
+int HuffEncoderWriteHeaderBytes_(HuffEncoder encoder, uint8_t *buf, int length)
+{
+  int toWrite;
+  int byteIdx;
+  int countLookup;
+  int byteLookup;
+  int i;
+  assert(encoder != NULL);
+  assert(length == 0 || buf != NULL);
+
+  toWrite = (length < encoder->counterBytesToWrite) ? length : encoder->counterBytesToWrite;
+
+  byteIdx = (256*sizeof(ctr) - encoder->counterBytesToWrite);
+  countLookup = byteIdx / sizeof(ctr);
+  byteLookup = byteIdx % sizeof(ctr);
+
+  for (i = 0; i < toWrite; i++) {
+    /* This expression is simpler than the other ones, at least
+       It's a little-endian serializationm by the way */
+    uint8_t byte = (uint8_t)((HuffCounterCount(encoder->counter, countLookup) & ((ctr)0xFF) << ((ctr)(byteLookup*8))) >> ((ctr)(byteLookup*8)));
+    buf[i] = byte;
+
+    byteLookup++;
+    if (byteLookup == sizeof(ctr)) {
+      byteLookup = 0;
+      countLookup++;
+    }
+  }
+
+  encoder->counterBytesToWrite -= toWrite;
+  return toWrite;
 }
 
 /* decoder */

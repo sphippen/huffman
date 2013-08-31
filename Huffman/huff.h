@@ -25,7 +25,7 @@ int HuffCounterFeedData(HuffCounter counter, const uint8_t *data, int length);
 
 HuffEncoder HuffEncoderInit(HuffCounter counter, int initialBufferSize);
 void HuffEncoderDestroy(HuffEncoder encoder);
-int HuffEncoderFeedData(HuffEncoder encoder, const uint8_t *data, int length);
+int HuffEncoderFeedData(HuffEncoder encoder, const uint8_t *data, int length, int *processed);
 int HuffEncoderEndData(HuffEncoder encoder);
 int HuffEncoderByteCount(HuffEncoder encoder);
 int HuffEncoderWriteBytes(HuffEncoder encoder, uint8_t *buf, int length);

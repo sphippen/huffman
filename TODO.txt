@@ -1,0 +1,6 @@
+- Add some way to report out of the decoder EOF is hit
+- Prevent overflow when calculating bits left by restricting buffer size (including at input)
+- Enforce that more data can't be added after the EOF in the encoder
+- More typedefs for internal types
+- Prevent overflow in EncoderByteCount by restricting internal buffer size to < (INT_MAX - 256*sizeof(ctr))
+- Audit the whole thing
