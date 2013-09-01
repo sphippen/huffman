@@ -801,7 +801,7 @@ int HuffEncoderWriteBytes(HuffEncoder encoder, uint8_t *buf, int length)
 
   length -= headerWriteCount;
 
-  byteCount = HuffEncoderByteCount(encoder);
+  byteCount = encoder->byteIdx;
   toWrite = (length < byteCount) ? length : byteCount;
 
   if (toWrite > 0) {
@@ -955,6 +955,8 @@ struct HuffDecoder_
   int bitIdx;
 };
 
+static int HuffDecoderFeedHeaderData_(HuffDecoder decoder, const uint8_t *data, int length);
+
 HuffDecoder HuffDecoderInit(int initialBufferSize)
 {
   HuffDecoder dec = malloc(sizeof(*dec));
@@ -1003,20 +1005,97 @@ void HuffDecoderDestroy(HuffDecoder decoder)
   free(decoder);
 }
 
-int HuffDecoderFeedData(HuffDecoder decoder, const uint8_t *data, int length)
+int HuffDecoderFeedData(HuffDecoder decoder, const uint8_t *data, int length, int *processed)
 {
-  /* TODO - implement */
-  return 0;
+  int ret = HUFF_NOMEM;
+  int headerBytesRead = 0;
+  int charBytesRead = 0;
+  assert(decoder != NULL);
+  assert(length == 0 || data != NULL);
+  assert(length == 0 || processed != NULL);
+
+  headerBytesRead = HuffDecoderFeedHeaderData_(decoder, data, length);
+
+  length -= headerBytesRead;
+  data += headerBytesRead;
+
+  if (decoder->counterBytesRead == 256*sizeof(ctr) && decoder->tree == NULL) {
+    /* We just finished reading the header */
+    decoder->tree = HuffTreeInit(decoder->counter);
+    if (decoder->tree == NULL)
+      goto out;
+  }
+
+  if (decoder->tree != NULL) {
+    /* TODO: finish implementing */
+  }
+
+  ret = HUFF_SUCCESS;
+out:
+  *processed = headerBytesRead + charBytesRead;
+  return ret;
 }
 
 int HuffDecoderByteCount(HuffDecoder decoder)
 {
-  /* TODO - implement */
-  return 0;
+  assert(decoder != NULL);
+
+  return decoder->byteIdx;
 }
 
 int HuffDecoderWriteBytes(HuffDecoder decoder, uint8_t *buf, int length)
 {
-  /* TODO - implement */
-  return 0;
+  int toWrite;
+  assert(decoder != NULL);
+  assert(length == 0 || buf != NULL);
+
+  toWrite = (length < decoder->byteIdx) ? length : decoder->byteIdx;
+
+  if (toWrite > 0) {
+    int toShift;
+    memcpy(buf, decoder->buffer, toWrite);
+    
+    /* Shift data down in the internal buffer */
+    toShift = decoder->bufferSize - toWrite;
+    for (i = 0; i < toShift; i++)
+      decoder->buffer[i] = decoder->buffer[i+toWrite];
+
+    decoder->byteIdx -= toWrite;
+  }
+
+  return toWrite;
+}
+
+static int HuffDecoderFeedHeaderData_(HuffDecoder decoder, const uint8_t *data, int length)
+{
+  int bytesLeft;
+  int toRead;
+
+  assert(decoder != NULL);
+  assert(length == 0 || data != NULL);
+
+  bytesLeft = 256*sizeof(ctr) - decoder->counterBytesRead;
+
+  toRead = (length < bytesLeft) ? length : bytesLeft;
+
+  if (toRead > 0) {
+    int i;
+    int byteOffset = decoder->counterBytesRead % sizeof(ctr);
+    int countIdx = decoder->counterBytesRead / sizeof(ctr);
+
+    for (i = 0; i < toRead; i++) {
+      decoder->countHolder |= data[i]<<(byteOffset*8);
+      
+      byteOffset++;
+      if (byteOffset == sizeof(ctr)) {
+        HuffCounterSetCount(decoder->counter, countIdx, decoder->countHolder);
+        decoder->countHolder = 0;
+        byteOffset = 0;
+        countIdx++;
+    }
+
+    decoder->counterBytesRead -= toRead;
+  }
+
+  return toRead;
 }

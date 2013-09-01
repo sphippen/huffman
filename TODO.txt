@@ -2,6 +2,10 @@
 - Enforce that more data can't be added after the EOF in the encoder
 - Enforce that more data can't be processed after EOF is hit in the decoder
 - More typedefs for internal types
+- Comments
 ? Prevent overflow in EncoderByteCount by restricting internal buffer size to < (INT_MAX - 256*sizeof(ctr))
 ? Prevent overflow in DecoderByteCount by restricting internal buffer size to < (INT_MAX - 256*sizeof(ctr))
 - Audit the whole thing
+- Make asserts more consistent
+
+- Easy Mode

@@ -32,7 +32,7 @@ int HuffEncoderWriteBytes(HuffEncoder encoder, uint8_t *buf, int length);
 
 HuffDecoder HuffDecoderInit(int initialBufferSize);
 void HuffDecoderDestroy(HuffDecoder decoder);
-int HuffDecoderFeedData(HuffDecoder decoder, const uint8_t *data, int length);
+int HuffDecoderFeedData(HuffDecoder decoder, const uint8_t *data, int length, int *processed);
 int HuffDecoderByteCount(HuffDecoder decoder);
 int HuffDecoderWriteBytes(HuffDecoder decoder, uint8_t *buf, int length);
 
