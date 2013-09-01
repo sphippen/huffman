@@ -5,8 +5,8 @@
 #include <limits.h>
 #include <assert.h>
 
-#define HUFF_EOF 256
-#define HUFF_ENCODER_BUFFER_START 1024
+#define HUFF_EOF_CHAR 256
+#define HUFF_BUFFER_START 1024
 
 typedef int32_t ctr;
 #define CTR_MAX INT32_MAX
@@ -45,20 +45,27 @@ static List ListInit(void)
 {
   List l;
 
-  l = calloc(1, sizeof(*l));
+  l = malloc(sizeof(*l));
   if (l == NULL)
     goto out;
 
-  l->first = calloc(1, sizeof(*(l->first)));
+  l->first = malloc(sizeof(*(l->first)));
   if (l->first == NULL)
     goto out1;
 
-  l->last = calloc(1, sizeof(*(l->last)));
+  l->last = malloc(sizeof(*(l->last)));
   if (l->last == NULL)
     goto out2;
   
+  l->first->data = NULL;
   l->first->next = l->last;
+  l->first->prev = NULL;
+
+  l->last->data = NULL;
   l->last->prev = l->first;
+  l->last->next = NULL;
+
+  l->size = 0;
   return l;
 
 out2:
@@ -124,7 +131,7 @@ static int ListInsert(List l, void *data, int index)
   after = before->next;
   assert(after != NULL);
 
-  at = calloc(1, sizeof(*at));
+  at = malloc(sizeof(*at));
   if (at == NULL)
     return -1;
   
@@ -220,7 +227,7 @@ static PriorityQueue PriorityQueueInit(void)
 {
   PriorityQueue pq;
 
-  pq = calloc(1, sizeof(*pq));
+  pq = malloc(sizeof(*pq));
   if (pq == NULL)
     return NULL;
 
@@ -235,7 +242,7 @@ static void PriorityQueueDestroy(PriorityQueue pq)
 {
   assert(pq != NULL);
 
-  /* This frees all the PriorityQueueItem structs we calloc'd */
+  /* This frees all the PriorityQueueItem structs we malloc'd */
   while (PriorityQueueSize(pq) > 0)
     PriorityQueueRemoveMin(pq);
 
@@ -252,7 +259,7 @@ static int PriorityQueueInsert(PriorityQueue pq, void *data, ctr priority)
   int res;
   assert(pq != NULL);
 
-  thisItem = calloc(1, sizeof(*thisItem));
+  thisItem = malloc(sizeof(*thisItem));
   if (thisItem == NULL)
     goto out;
   
@@ -320,15 +327,20 @@ struct HuffCounter_
   ctr totalCount;
 };
 
-static ctr HuffCounterCount(HuffCounter counter, int c);
+static ctr HuffCounterCount(HuffCounter counter, uint8_t c);
+static void HuffCounterSetCount(HuffCounter counter, uint8_t c, ctr count);
 
 HuffCounter HuffCounterInit(void)
 {
   HuffCounter counter;
+  int i;
 
-  counter = calloc(1, sizeof(*counter));
+  counter = malloc(sizeof(*counter));
   if (counter == NULL)
     return NULL;
+
+  for (i = 0; i < 256; i++)
+    counter->counts[i] = 0;
 
   /* One EOF will never be accounted for otherwise, so we put it here */
   counter->totalCount = 1;
@@ -340,10 +352,9 @@ HuffCounter HuffCounterCopy(HuffCounter from)
   HuffCounter into;
   assert(from != NULL);
 
-  into = calloc(1, sizeof(*into));
+  into = malloc(sizeof(*into));
   if (into == NULL)
     return NULL;
-
 
   memcpy(into, from, sizeof(*into));
 
@@ -379,13 +390,18 @@ int HuffCounterFeedData(HuffCounter counter, const uint8_t* data, int length)
   memcpy(counter, &workingCounter, sizeof(workingCounter));
   return HUFF_SUCCESS;
 }
-static ctr HuffCounterCount(HuffCounter counter, int c)
+static ctr HuffCounterCount(HuffCounter counter, uint8_t c)
 {
   assert(counter != NULL);
-  assert(c >= 0);
-  assert(c <= 256);
 
   return counter->counts[c];
+}
+static void HuffCounterSetCount(HuffCounter counter, uint8_t c, ctr count)
+{
+  assert(counter != NULL);
+  assert(count >= 0);
+
+  counter->counts[c] = count;
 }
 
 /* Huffman tree */
@@ -438,7 +454,7 @@ static HuffTree HuffTreeInit(HuffCounter counter)
   int i;
   struct HuffTreeNode *lastNode;
 
-  tree = calloc(1, sizeof(*tree));
+  tree = malloc(sizeof(*tree));
   if (tree == NULL)
     goto out;
 
@@ -449,21 +465,30 @@ static HuffTree HuffTreeInit(HuffCounter counter)
   /* Add all the characters (plus EOF) to the priority queue with their counts as priorities */
   for (i = 0; i < 257; i++) {
     struct HuffTreeNode *node = malloc(sizeof(*node));
+    ctr count;
     if (node == NULL)
       goto out2;
+
+    if (i == HUFF_EOF_CHAR)
+      count = 1;
+    else
+      count = HuffCounterCount(counter, i);
 
     tree->leafs[i] = node;
     node->isLeaf = 1;
     node->c = i;
-    node->weight = HuffCounterCount(counter, i);
+    node->weight = count;
     node->parent = NULL;
 
-    res = PriorityQueueInsert(pq, (void *)(char)i, HuffCounterCount(counter, i));
+    res = PriorityQueueInsert(pq, (void *)(char)i, count);
     if (res) {
       free(node);
       node = NULL;
       goto out2;
     }
+
+    tree->leafBits[i] = NULL;
+    tree->leafBitLengths[i] = 0;
   }
 
   /* Build the tree by repeatedly pairing the lowest-weight nodes */
@@ -560,6 +585,7 @@ static int HuffTreeEncode(HuffTree tree, int in, const uint8_t **outBits, int *o
     int byteIdx;
     int bitIdx;
     uint8_t *bitBase;
+    int i;
     assert(tree->leafBitLengths[in] == 0);
 
     /* Calculate length of bit pattern */
@@ -573,9 +599,12 @@ static int HuffTreeEncode(HuffTree tree, int in, const uint8_t **outBits, int *o
     assert(length > 0);
     assert(length <= INT_MAX - 7);
 
-    tree->leafBits[in] = calloc(1, (length + 7)/8);
+    tree->leafBits[in] = malloc((length + 7)/8);
     if (tree->leafBits[in] != NULL)
       return -1;
+
+    for (i = 0; i < (length + 7)/8; i++)
+      tree->leafBits[in][i] = 0;
 
     bitBase = tree->leafBits[in];
     bitIdx = (length-1) % 8;
@@ -672,16 +701,16 @@ struct HuffEncoder_
   int bitIdx;
 };
 
-int HuffEncoderExpandBufferToFit_(HuffEncoder encoder, int byteCount, int bitCount);
-int HuffEncoderFeedSingle_(HuffEncoder encoder, int data);
-int HuffEncoderWriteHeaderBytes_(HuffEncoder encoder, uint8_t *buf, int length);
+static int HuffEncoderExpandBufferToFit_(HuffEncoder encoder, int byteCount, int bitCount);
+static int HuffEncoderFeedSingle_(HuffEncoder encoder, int data);
+static int HuffEncoderWriteHeaderBytes_(HuffEncoder encoder, uint8_t *buf, int length);
 
 HuffEncoder HuffEncoderInit(HuffCounter counter, int initialBufferSize)
 {
   HuffEncoder enc;
   assert(initialBufferSize >= 0);
 
-  enc = calloc(1, sizeof(*enc));
+  enc = malloc(sizeof(*enc));
   if (enc == NULL)
     goto out;
 
@@ -699,7 +728,7 @@ HuffEncoder HuffEncoderInit(HuffCounter counter, int initialBufferSize)
     goto out2;
 
   if (initialBufferSize == 0)
-    initialBufferSize = HUFF_ENCODER_BUFFER_START;
+    initialBufferSize = HUFF_BUFFER_START;
 
   enc->buffer = malloc(initialBufferSize);
   if (enc->buffer == NULL)
@@ -750,7 +779,7 @@ int HuffEncoderFeedData(HuffEncoder encoder, const uint8_t *data, int length, in
 int HuffEncoderEndData(HuffEncoder encoder)
 {
   assert(encoder != NULL);
-  return HuffEncoderFeedSingle_(encoder, HUFF_EOF);
+  return HuffEncoderFeedSingle_(encoder, HUFF_EOF_CHAR);
 }
 int HuffEncoderByteCount(HuffEncoder encoder)
 {
@@ -788,7 +817,7 @@ int HuffEncoderWriteBytes(HuffEncoder encoder, uint8_t *buf, int length)
 
   return headerWriteCount + toWrite;
 }
-int HuffEncoderFeedSingle_(HuffEncoder encoder, int data)
+static int HuffEncoderFeedSingle_(HuffEncoder encoder, int data)
 {
   const uint8_t *bits;
   int totalBitCount;
@@ -843,7 +872,7 @@ int HuffEncoderFeedSingle_(HuffEncoder encoder, int data)
 
   return HUFF_SUCCESS;
 }
-int HuffEncoderExpandBufferToFit_(HuffEncoder encoder, int byteCount, int bitCount)
+static int HuffEncoderExpandBufferToFit_(HuffEncoder encoder, int byteCount, int bitCount)
 {
   int freeBytes;
   int freeBits;
@@ -878,7 +907,7 @@ int HuffEncoderExpandBufferToFit_(HuffEncoder encoder, int byteCount, int bitCou
   else
     return 0;
 }
-int HuffEncoderWriteHeaderBytes_(HuffEncoder encoder, uint8_t *buf, int length)
+static int HuffEncoderWriteHeaderBytes_(HuffEncoder encoder, uint8_t *buf, int length)
 {
   int toWrite;
   int byteIdx;
@@ -912,15 +941,66 @@ int HuffEncoderWriteHeaderBytes_(HuffEncoder encoder, uint8_t *buf, int length)
 }
 
 /* decoder */
-HuffDecoder HuffDecoderInit(void)
+struct HuffDecoder_
 {
-  /* TODO - implement */
+  HuffCounter counter;
+  int counterBytesRead;
+  ctr countHolder;
+
+  HuffTree tree;
+
+  uint8_t* buffer;
+  int bufferSize;
+  int byteIdx;
+  int bitIdx;
+};
+
+HuffDecoder HuffDecoderInit(int initialBufferSize)
+{
+  HuffDecoder dec = malloc(sizeof(*dec));
+  if (dec == NULL)
+    goto out;
+
+  dec->counter = HuffCounterInit();
+  if (dec->counter == NULL)
+    goto out1;
+
+  dec->counterBytesRead = 0;
+  dec->countHolder = 0;
+
+  dec->tree = NULL;
+
+  if (initialBufferSize == 0)
+    initialBufferSize = HUFF_BUFFER_START;
+
+  dec->buffer = malloc(initialBufferSize);
+  if (dec->buffer == NULL)
+    goto out2;
+
+  dec->bufferSize = initialBufferSize;
+  dec->byteIdx = 0;
+  dec->bitIdx = 0;
+
+  return dec;
+
+out2:
+  HuffCounterDestroy(dec->counter);
+out1:
+  free(dec);
+  dec = NULL;
+out:
   return NULL;
 }
 
 void HuffDecoderDestroy(HuffDecoder decoder)
 {
-  /* TODO - implement */
+  assert(decoder != NULL);
+
+  HuffCounterDestroy(decoder->counter);
+  if (decoder->tree != NULL)
+    HuffTreeDestroy(decoder->tree);
+  free(decoder->buffer);
+  free(decoder);
 }
 
 int HuffDecoderFeedData(HuffDecoder decoder, const uint8_t *data, int length)
