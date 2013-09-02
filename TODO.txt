@@ -1,5 +1,3 @@
-- Debug
-- Make sure encoder fills in rest of last byte with zeroes after encoding EOF
 - Make sure serialized count values aren't negative
 - Add some way to report out of the decoder EOF is hit
 - Enforce that more data can't be added after the EOF in the encoder

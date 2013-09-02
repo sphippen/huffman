@@ -256,7 +256,6 @@ static int PriorityQueueInsert(PriorityQueue pq, void *data, ctr priority)
   struct PriorityQueueItem *thisItem;
   int size;
   int insertIdx;
-  int i;
   List l;
   int res;
   assert(pq != NULL);
@@ -514,12 +513,6 @@ static HuffTree HuffTreeInit(HuffCounter counter)
     assert(left != NULL);
     assert(right != NULL);
 
-    if (left->isLeaf)
-      printf("left char: %d\n", left->c);
-    if (right->isLeaf)
-      printf("right char: %d\n", right->c);
-    /*printf("left weight: %d, isLeaf: %d right weight: %d, isLeaf: %d\n", left->weight, left->isLeaf, right->weight, right->isLeaf);*/
-
     joiner->left = left;
     joiner->right = right;
     joiner->parent = NULL;
@@ -742,7 +735,7 @@ HuffEncoder HuffEncoderInit(HuffCounter counter, int initialBufferSize)
   if (initialBufferSize == 0)
     initialBufferSize = HUFF_BUFFER_START;
 
-  enc->buffer = malloc(initialBufferSize);
+  enc->buffer = calloc(1, initialBufferSize);
   if (enc->buffer == NULL)
     goto out3;
 
@@ -908,6 +901,8 @@ static int HuffEncoderExpandBufferToFit_(HuffEncoder encoder, int byteCount, int
       /* Couldn't get bigger due to lack of memory */
       break;
     
+    memset(newBuffer+encoder->bufferSize, 0, encoder->bufferSize);
+
     freeBytes += encoder->bufferSize;
     encoder->buffer = newBuffer;
     encoder->bufferSize *= 2;
@@ -1061,6 +1056,7 @@ int HuffDecoderFeedData(HuffDecoder decoder, const uint8_t *data, int length, in
 
       decoder->bitIdx++;
       if (decoder->bitIdx == 8) {
+        decoder->bitIdx = 0;
         length--;
         if (length != 0)
           data++;
@@ -1072,9 +1068,8 @@ int HuffDecoderFeedData(HuffDecoder decoder, const uint8_t *data, int length, in
           /* If it didn't end on a byte boundary, ignore the rest and mark as processing the rest of the byte */
           if (decoder->bitIdx != 0) {
             charBytesRead++;
-            length--;
+            length = 0;
           }
-          goto out;
         } else {
           int res = HuffDecoderExpandToFitByte_(decoder);
           if (res) {
@@ -1197,7 +1192,7 @@ static int HuffDecoderExpandToFitByte_(HuffDecoder decoder)
   }
 
   HuffDecoderProcessHolder_(decoder);
-  assert(decoder->bitIdx < decoder->bufferSize);
+  assert(decoder->byteIdx < decoder->bufferSize);
   return 0;
 }
 
