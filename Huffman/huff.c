@@ -1,6 +1,7 @@
 #include "huff.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <limits.h>
 #include <assert.h>
@@ -255,6 +256,7 @@ static int PriorityQueueInsert(PriorityQueue pq, void *data, ctr priority)
   struct PriorityQueueItem *thisItem;
   int size;
   int insertIdx;
+  int i;
   List l;
   int res;
   assert(pq != NULL);
@@ -286,7 +288,11 @@ static int PriorityQueueInsert(PriorityQueue pq, void *data, ctr priority)
       i++;
     } while (lastPri < priority && i < size);
 
-    insertIdx = i-1;
+    /* If we went off the end, insert past the current last element */
+    if (lastPri < priority)
+      insertIdx = i;
+    else
+      insertIdx = i-1;
   }
 
   res = ListInsert(l, thisItem, insertIdx);
@@ -442,7 +448,7 @@ static void HuffTreeDestroy(HuffTree tree);
 static int HuffTreeEncode(HuffTree tree, int in, const uint8_t **outBits, int *outBitCount);
 /* Returns 0 if no output chars are finished yet,
    1 if an output char was finished - the output char is written to the |out| argument
-   |out| is an int so that it can hold HUFFMAN_EOF, in addition to uint8_t values */
+   |out| is an int so that it can hold HUFF_EOF_CHAR, in addition to uint8_t values */
 static int HuffTreeDecode(HuffTree tree, int bit, int *out);
 static void HuffTreeNodeFree_(struct HuffTreeNode *node);
 
@@ -480,7 +486,7 @@ static HuffTree HuffTreeInit(HuffCounter counter)
     node->weight = count;
     node->parent = NULL;
 
-    res = PriorityQueueInsert(pq, (void *)(char)i, count);
+    res = PriorityQueueInsert(pq, (void *)node, count);
     if (res) {
       free(node);
       node = NULL;
@@ -507,6 +513,12 @@ static HuffTree HuffTreeInit(HuffCounter counter)
     right = PriorityQueueRemoveMin(pq);
     assert(left != NULL);
     assert(right != NULL);
+
+    if (left->isLeaf)
+      printf("left char: %d\n", left->c);
+    if (right->isLeaf)
+      printf("right char: %d\n", right->c);
+    /*printf("left weight: %d, isLeaf: %d right weight: %d, isLeaf: %d\n", left->weight, left->isLeaf, right->weight, right->isLeaf);*/
 
     joiner->left = left;
     joiner->right = right;
@@ -600,7 +612,7 @@ static int HuffTreeEncode(HuffTree tree, int in, const uint8_t **outBits, int *o
     assert(length <= INT_MAX - 7);
 
     tree->leafBits[in] = malloc((length + 7)/8);
-    if (tree->leafBits[in] != NULL)
+    if (tree->leafBits[in] == NULL)
       return -1;
 
     for (i = 0; i < (length + 7)/8; i++)
@@ -881,7 +893,7 @@ static int HuffEncoderExpandBufferToFit_(HuffEncoder encoder, int byteCount, int
   assert(encoder->byteIdx >= 0);
   assert(encoder->bitIdx >= 0);
   /* Check if we already have enough space in the buffer */
-  freeBytes = encoder->bufferSize - encoder->byteIdx + (encoder->bitIdx + 7)/8;
+  freeBytes = encoder->bufferSize - encoder->byteIdx - (encoder->bitIdx + 7)/8;
   freeBits = (8 - encoder->bitIdx) % 8;
   notEnoughSpace = freeBytes < byteCount || (freeBytes == byteCount && freeBits < bitCount);
   while (notEnoughSpace) {
@@ -952,10 +964,16 @@ struct HuffDecoder_
   uint8_t* buffer;
   int bufferSize;
   int byteIdx;
+
+  int dataHolderInUse;
+  uint8_t dataHolder;
+
   int bitIdx;
 };
 
 static int HuffDecoderFeedHeaderData_(HuffDecoder decoder, const uint8_t *data, int length);
+static int HuffDecoderExpandToFitByte_(HuffDecoder decoder);
+static void HuffDecoderProcessHolder_(HuffDecoder decoder);
 
 HuffDecoder HuffDecoderInit(int initialBufferSize)
 {
@@ -981,6 +999,10 @@ HuffDecoder HuffDecoderInit(int initialBufferSize)
 
   dec->bufferSize = initialBufferSize;
   dec->byteIdx = 0;
+
+  dec->dataHolder = 0;
+  dec->dataHolderInUse = 0;
+
   dec->bitIdx = 0;
 
   return dec;
@@ -1027,7 +1049,46 @@ int HuffDecoderFeedData(HuffDecoder decoder, const uint8_t *data, int length, in
   }
 
   if (decoder->tree != NULL) {
-    /* TODO: finish implementing */
+    /* TODO - fix holder logic here (it's seriously broken) */
+    /*HuffDecoderProcessHolder_(decoder);*/
+    int bufferSpace = (decoder->bufferSize - decoder->byteIdx);
+    int toRead = (bufferSpace < length) ? bufferSpace : length;
+
+    while (length > 0) {
+      int out;
+      int bit = (data[0] & (1<<decoder->bitIdx)) >> decoder->bitIdx;
+      int res = HuffTreeDecode(decoder->tree, bit, &out);
+
+      decoder->bitIdx++;
+      if (decoder->bitIdx == 8) {
+        length--;
+        if (length != 0)
+          data++;
+        charBytesRead++;
+      }
+
+      if (res) {
+        if (out == HUFF_EOF_CHAR) {
+          /* If it didn't end on a byte boundary, ignore the rest and mark as processing the rest of the byte */
+          if (decoder->bitIdx != 0) {
+            charBytesRead++;
+            length--;
+          }
+          goto out;
+        } else {
+          int res = HuffDecoderExpandToFitByte_(decoder);
+          if (res) {
+            decoder->dataHolder = out;
+            decoder->dataHolderInUse = 1;
+            ret = HUFF_TOOMUCHDATA;
+            goto out;
+          }
+          else {
+            decoder->buffer[decoder->byteIdx++] = out;
+          }
+        }
+      }
+    }
   }
 
   ret = HUFF_SUCCESS;
@@ -1053,6 +1114,7 @@ int HuffDecoderWriteBytes(HuffDecoder decoder, uint8_t *buf, int length)
 
   if (toWrite > 0) {
     int toShift;
+    int i;
     memcpy(buf, decoder->buffer, toWrite);
     
     /* Shift data down in the internal buffer */
@@ -1062,6 +1124,9 @@ int HuffDecoderWriteBytes(HuffDecoder decoder, uint8_t *buf, int length)
 
     decoder->byteIdx -= toWrite;
   }
+
+  /* There might have been space freed up */
+  HuffDecoderProcessHolder_(decoder);
 
   return toWrite;
 }
@@ -1092,10 +1157,56 @@ static int HuffDecoderFeedHeaderData_(HuffDecoder decoder, const uint8_t *data, 
         decoder->countHolder = 0;
         byteOffset = 0;
         countIdx++;
+      }
     }
 
-    decoder->counterBytesRead -= toRead;
+    decoder->counterBytesRead += toRead;
   }
 
   return toRead;
+}
+
+static int HuffDecoderExpandToFitByte_(HuffDecoder decoder)
+{
+  assert(decoder != NULL);
+
+  assert(decoder->byteIdx <= decoder->bufferSize);
+
+  HuffDecoderProcessHolder_(decoder);
+
+  if (decoder->byteIdx == decoder->bufferSize) {
+    int newSize;
+    uint8_t *newBuf;
+
+    /* Prevent overflow conditions */
+    if (decoder->bufferSize > INT_MAX / 2)
+      return -1;
+
+    /* The holder will take another byte, so 2 bytes will not be sufficient */
+    if (decoder->bufferSize == 1 && decoder->dataHolderInUse)
+      newSize = 4;
+    else
+      newSize = decoder->bufferSize*2;
+
+    newBuf = realloc(decoder->buffer, newSize);
+    if (newBuf == NULL)
+      return -1;
+
+    decoder->bufferSize = newSize;
+    decoder->buffer = newBuf;
+  }
+
+  HuffDecoderProcessHolder_(decoder);
+  assert(decoder->bitIdx < decoder->bufferSize);
+  return 0;
+}
+
+static void HuffDecoderProcessHolder_(HuffDecoder decoder)
+{
+  assert(decoder != NULL);
+  
+  if (decoder->dataHolderInUse && decoder->byteIdx < decoder->bufferSize) {
+    decoder->buffer[decoder->byteIdx++] = decoder->dataHolder;
+    decoder->dataHolderInUse = 0;
+  }
 }

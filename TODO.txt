@@ -1,3 +1,6 @@
+- Debug
+- Make sure encoder fills in rest of last byte with zeroes after encoding EOF
+- Make sure serialized count values aren't negative
 - Add some way to report out of the decoder EOF is hit
 - Enforce that more data can't be added after the EOF in the encoder
 - Enforce that more data can't be processed after EOF is hit in the decoder
@@ -7,5 +10,7 @@
 ? Prevent overflow in DecoderByteCount by restricting internal buffer size to < (INT_MAX - 256*sizeof(ctr))
 - Audit the whole thing
 - Make asserts more consistent
+
+- Test in circumstances where malloc can actually fail (to make sure that the code behaves properly in those cases)
 
 - Easy Mode
