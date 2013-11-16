@@ -1,6 +1,8 @@
 #include "huff.h"
 
+#define _CRTDBG_MAP_ALLOC
 #include <stdlib.h>
+#include <crtdbg.h>
 #include <stdio.h>
 
 int main(int argc, char* argv)
@@ -24,7 +26,7 @@ int main(int argc, char* argv)
   if (in == NULL)
     exit(1);
 
-  originalSize = 1024*1024;
+  originalSize = 2445312;
   original = malloc(originalSize);
   if (original == NULL)
     exit(1);
@@ -82,14 +84,22 @@ int main(int argc, char* argv)
     exit(1);
 
   /* Verify that the data is the same after going through */
-  if (decodedSize != originalSize)
+  /*if (decodedSize != originalSize)
     exit(1);
 
   for (i = 0; i < decodedSize; i++)
     if (original[i] != decoded[i])
-      exit(1);
+      exit(1);*/
+  
+  HuffCounterDestroy(counter);
+  HuffEncoderDestroy(encoder);
+  HuffDecoderDestroy(decoder);
+  free(original);
+  free(encoded);
+  free(decoded);
 
-  printf("Good!");
+  printf("Good!\n");
+  _CrtDumpMemoryLeaks();
   getchar();
 
   return 0;

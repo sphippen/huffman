@@ -308,12 +308,17 @@ out:
 static void *PriorityQueueRemoveMin(PriorityQueue pq)
 {
   struct PriorityQueueItem *item;
+  void *ret;
   assert(pq != NULL);
 
   item = ListRemove(pq->l, 0);
   assert(item != NULL);
 
-  return item->data;
+  ret = item->data;
+  free(item);
+  item = NULL;
+
+  return ret;
 }
 static int PriorityQueueSize(PriorityQueue pq)
 {
