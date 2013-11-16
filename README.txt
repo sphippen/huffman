@@ -8,4 +8,4 @@ But it's not very fast or useful.
 Oh well.
 
 Visual Studio 2010.
-MIT Licensed.
+zlib/libpng license.
